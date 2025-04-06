@@ -455,7 +455,20 @@ class GPTModel(L.LightningModule, io.IOMixin, io.ConnectorMixin, fn.FNMixin):
         # In mcore the loss-function is part of the forward-pass (when labels are provided)
         return self.forward_step(batch)
 
-    def get_inference_wrapper(self, params_dtype, inference_batch_times_seqlen_threshold) -> torch.Tensor:
+    def get_inference_wrapper(
+        self, params_dtype, inference_batch_times_seqlen_threshold, inference_max_seq_length
+    ) -> torch.Tensor:
+        """Get an inference wrapper for the model.
+
+        Creates and configures a GPTInferenceWrapper around the model for efficient inference.
+
+        Args:
+            params_dtype: Data type for parameters
+            inference_batch_times_seqlen_threshold: Threshold for optimizing inference
+
+        Returns:
+            torch.Tensor: Wrapped model for inference
+        """
         # This is to get the MCore model required in GPTInferenceWrapper.
         mcore_model = self.module
         while mcore_model:
@@ -481,6 +494,7 @@ class GPTModel(L.LightningModule, io.IOMixin, io.ConnectorMixin, fn.FNMixin):
             params_dtype=params_dtype,
             inference_batch_times_seqlen_threshold=inference_batch_times_seqlen_threshold,
             padded_vocab_size=vocab_size,
+            inference_max_seq_length=inference_max_seq_length,
         )
 
         model_inference_wrapper = GPTInferenceWrapper(mcore_model, inference_wrapper_config)
