@@ -1,23 +1,32 @@
 import os
 import warnings
+from statistics import NormalDist
 from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
 import torch.distributed
-from megatron.core import parallel_state
 from einops import rearrange
-from statistics import NormalDist
+from megatron.core import parallel_state
 from torch import Tensor
 from torch.distributed import broadcast_object_list, get_process_group_ranks
 
 from nemo.collections.diffusion.sampler.batch_ops import *
-from nemo.collections.diffusion.sampler.conditioner import BaseVideoCondition, VideoExtendCondition, DataType, Edify4Condition
-from nemo.collections.diffusion.sampler.context_parallel import split_inputs_cp, cat_outputs_cp
-from nemo.collections.diffusion.sampler.res.res_sampler import COMMON_SOLVER_OPTIONS, RESSampler
-from nemo.collections.diffusion.sampler.edm.edm_pipeline import EDMPipeline
+from nemo.collections.diffusion.sampler.conditioner import (
+    BaseVideoCondition,
+    DataType,
+    Edify4Condition,
+    VideoExtendCondition,
+)
+from nemo.collections.diffusion.sampler.context_parallel import cat_outputs_cp, split_inputs_cp
+from nemo.collections.diffusion.sampler.cosmos.cosmos_extended_diffusion_pipeline import (
+    IS_PREPROCESSED_KEY,
+    ExtendedDiffusionPipeline,
+)
 from nemo.collections.diffusion.sampler.edm.edm import EDMSDE, EDMSampler, EDMScaling
-from nemo.collections.diffusion.sampler.cosmos.cosmos_extended_diffusion_pipeline import ExtendedDiffusionPipeline, IS_PREPROCESSED_KEY
+from nemo.collections.diffusion.sampler.edm.edm_pipeline import EDMPipeline
+from nemo.collections.diffusion.sampler.res.res_sampler import COMMON_SOLVER_OPTIONS, RESSampler
+
 
 class CosmosControlDiffusionPipeline(ExtendedDiffusionPipeline):
     def __init__(self, *args, **kwargs):
@@ -28,7 +37,7 @@ class CosmosControlDiffusionPipeline(ExtendedDiffusionPipeline):
 
     def get_x0_fn_from_batch_with_condition_latent(
         self,
-        data_batch: Dict,   
+        data_batch: Dict,
         guidance: float = 1.5,
         is_negative_prompt: bool = False,
         condition_latent: torch.Tensor = None,
@@ -141,7 +150,7 @@ class CosmosControlDiffusionPipeline(ExtendedDiffusionPipeline):
         num_condition_t: Union[int, None] = None,
         condition_video_augment_sigma_in_inference: float = None,
         add_input_frames_guidance: bool = False,
-        solver_option: COMMON_SOLVER_OPTIONS = "2ab"
+        solver_option: COMMON_SOLVER_OPTIONS = "2ab",
     ) -> Tensor:
         """
         Generate samples from the batch. Based on given batch, it will automatically determine whether to generate image or video samples.
@@ -151,10 +160,9 @@ class CosmosControlDiffusionPipeline(ExtendedDiffusionPipeline):
         if n_sample is None:
             input_key = self.input_image_key if is_image_batch else self.input_data_key
             n_sample = data_batch[input_key].shape[0]
-        
+
         if self._noise_generator is None:
             self._initialize_generators()
-
 
         state_shape = list(state_shape)
         np.random.seed(self.seed)
@@ -180,7 +188,9 @@ class CosmosControlDiffusionPipeline(ExtendedDiffusionPipeline):
         if self.sampler_type == "EDM":
             samples = self.sampler(x0_fn, x_sigma_max, num_steps=num_steps, sigma_max=self.sde.sigma_max)
         elif self.sampler_type == "RES":
-            samples = self.sampler(x0_fn, x_sigma_max, sigma_max=self.sde.sigma_max, num_steps=num_steps, solver_option=solver_option)
+            samples = self.sampler(
+                x0_fn, x_sigma_max, sigma_max=self.sde.sigma_max, num_steps=num_steps, solver_option=solver_option
+            )
 
         if cp_enabled:
             cp_group = parallel_state.get_context_parallel_group()
