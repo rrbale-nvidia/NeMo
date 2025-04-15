@@ -14,32 +14,39 @@
 
 
 import warnings
+from statistics import NormalDist
 from typing import Any, Callable, Dict, Tuple, Union
 
 import numpy as np
 import torch
 import torch.distributed
-from megatron.core import parallel_state
 from einops import rearrange
-from statistics import NormalDist
+from megatron.core import parallel_state
 from torch import Tensor
 
 from nemo.collections.diffusion.sampler.batch_ops import *
-from nemo.collections.diffusion.sampler.conditioner import BaseVideoCondition, VideoExtendCondition, DataType, Edify4Condition
-from nemo.collections.diffusion.sampler.context_parallel import split_inputs_cp, cat_outputs_cp
-from nemo.collections.diffusion.sampler.res.res_sampler import COMMON_SOLVER_OPTIONS, RESSampler
+from nemo.collections.diffusion.sampler.conditioner import (
+    BaseVideoCondition,
+    DataType,
+    Edify4Condition,
+    VideoExtendCondition,
+)
+from nemo.collections.diffusion.sampler.context_parallel import cat_outputs_cp, split_inputs_cp
 from nemo.collections.diffusion.sampler.edm.edm import EDMSDE, EDMSampler, EDMScaling
+from nemo.collections.diffusion.sampler.res.res_sampler import COMMON_SOLVER_OPTIONS, RESSampler
 
 # key to check if the video data is normalized or image data is converted to video data
 # to avoid apply normalization or augment image dimension multiple times
 # It is due to we do not have normalization and augment image dimension in the dataloader and move it to the model
 IS_PREPROCESSED_KEY = "is_preprocessed"
 
+
 class ExtendedDiffusionPipeline:
     """
     Diffusion pipeline for EDM sampling.
     Currently only supports video diffusion inference.
     """
+
     def __init__(
         self,
         # Video Tokenizer
@@ -53,7 +60,7 @@ class ExtendedDiffusionPipeline:
         p_std=1.0,
         sigma_max=80,
         sigma_min=0.0002,
-        sampler_type="RES", # or "RES"
+        sampler_type="RES",  # or "RES"
         # EDM Scaling Args
         sigma_data=0.5,
         seed=1234,
@@ -75,7 +82,6 @@ class ExtendedDiffusionPipeline:
         self._noise_level_generator = None
 
         self.sde = EDMSDE(p_mean, p_std, sigma_max, sigma_min)
-
 
         if self.sampler_type == "EDM":
             self.sampler = EDMSampler()
@@ -201,9 +207,13 @@ class ExtendedDiffusionPipeline:
             condition_video_indicator = split_inputs_cp(condition_video_indicator, seq_dim=2, cp_group=cp_group)
             augment_latent = split_inputs_cp(augment_latent, seq_dim=2, cp_group=cp_group)
             gt_latent = split_inputs_cp(gt_latent, seq_dim=2, cp_group=cp_group)
-            condition.condition_video_input_mask = split_inputs_cp(condition.condition_video_input_mask, seq_dim=2, cp_group=cp_group)
+            condition.condition_video_input_mask = split_inputs_cp(
+                condition.condition_video_input_mask, seq_dim=2, cp_group=cp_group
+            )
             if condition.condition_video_pose is not None:
-                condition.condition_video_pose = split_inputs_cp(condition.condition_video_pose, seq_dim=2, cp_group=cp_group)
+                condition.condition_video_pose = split_inputs_cp(
+                    condition.condition_video_pose, seq_dim=2, cp_group=cp_group
+                )
 
         # Combine / concatenate the conditional video latent with the noisy input.
         new_noise_xt = condition_video_indicator * augment_latent + (1 - condition_video_indicator) * xt
@@ -295,15 +305,13 @@ class ExtendedDiffusionPipeline:
 
         # Compute loss kernel.
         pred_mse = (x0 - x0_pred) ** 2 * loss_mask_per_sample  # Equation 5.
-         
+
         edm_loss = batch_mul(pred_mse, weights_per_sigma * weights_per_sample)
         if len(edm_loss.shape) > 5:
             edm_loss = edm_loss.squeeze(0)
         b, c, t, h, w = edm_loss.shape
         if logvar is not None and self.loss_add_logvar:
-            kendall_loss = batch_mul(edm_loss, torch.exp(-logvar).view(-1)).flatten(
-                start_dim=1
-            ) + logvar.view(-1, 1)
+            kendall_loss = batch_mul(edm_loss, torch.exp(-logvar).view(-1)).flatten(start_dim=1) + logvar.view(-1, 1)
         else:
             kendall_loss = edm_loss.flatten(start_dim=1)
 
@@ -350,7 +358,6 @@ class ExtendedDiffusionPipeline:
         #     return F.interpolate(weights, size=latent_x_shape[2:], mode="bilinear")
 
         return 1.0
-
 
     def get_per_sigma_loss_weights(self, sigma: torch.Tensor):
         """
@@ -448,7 +455,7 @@ class ExtendedDiffusionPipeline:
         num_condition_t: Union[int, None] = None,
         condition_video_augment_sigma_in_inference: float = None,
         add_input_frames_guidance: bool = False,
-        solver_option: COMMON_SOLVER_OPTIONS = "2ab"
+        solver_option: COMMON_SOLVER_OPTIONS = "2ab",
     ) -> Tensor:
         """
         Generate samples from the batch. Based on given batch, it will automatically determine whether to generate image or video samples.
@@ -458,7 +465,7 @@ class ExtendedDiffusionPipeline:
         if n_sample is None:
             input_key = self.input_image_key if is_image_batch else self.input_data_key
             n_sample = data_batch[input_key].shape[0]
-        
+
         if self._noise_generator is None:
             self._initialize_generators()
 
@@ -490,7 +497,9 @@ class ExtendedDiffusionPipeline:
         if self.sampler_type == "EDM":
             samples = self.sampler(x0_fn, x_sigma_max, num_steps=num_steps, sigma_max=self.sde.sigma_max)
         elif self.sampler_type == "RES":
-            samples = self.sampler(x0_fn, x_sigma_max, sigma_max=self.sde.sigma_max, num_steps=num_steps, solver_option=solver_option)
+            samples = self.sampler(
+                x0_fn, x_sigma_max, sigma_max=self.sde.sigma_max, num_steps=num_steps, solver_option=solver_option
+            )
 
         if cp_enabled:
             cp_group = parallel_state.get_context_parallel_group()
@@ -532,7 +541,6 @@ class ExtendedDiffusionPipeline:
                 warnings.warn("Normalizing video data in-place.")
                 data_batch[input_key] = data_batch[input_key].to(**self.tensor_kwargs) / 127.5 - 1.0
                 data_batch[IS_PREPROCESSED_KEY] = True
-
 
     def _augment_image_dim_inplace(self, data_batch: dict[str, Tensor]) -> None:
         input_key = self.input_image_key

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import numpy as np
+import torch
 
 from nemo.collections.diffusion.data import camera
 from nemo.collections.diffusion.data.camera import get_center_and_ray

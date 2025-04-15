@@ -14,8 +14,9 @@
 
 import json
 import os
-from typing import Dict, Literal
 import random
+from typing import Dict, Literal
+
 import torch
 from torch.utils.data import Dataset
 
@@ -30,11 +31,14 @@ class PosEmb3D:
         self.generate_pos_id()
 
     def generate_pos_id(self):
-        self.grid = torch.stack(torch.meshgrid(
-            torch.arange(self.max_t, device='cpu'),
-            torch.arange(self.max_h, device='cpu'),
-            torch.arange(self.max_w, device='cpu'),
-            ), dim=-1)
+        self.grid = torch.stack(
+            torch.meshgrid(
+                torch.arange(self.max_t, device='cpu'),
+                torch.arange(self.max_h, device='cpu'),
+                torch.arange(self.max_w, device='cpu'),
+            ),
+            dim=-1,
+        )
 
     def get_pos_id_3d(self, *, t, h, w):
         if t > self.max_t or h > self.max_h or w > self.max_w:
@@ -42,7 +46,8 @@ class PosEmb3D:
             self.max_h = max(self.max_h, h)
             self.max_w = max(self.max_w, w)
             self.generate_pos_id()
-        return self.grid[ :t, :h, :w]
+        return self.grid[:t, :h, :w]
+
 
 class ActionControlDiffusionDataset(Dataset):
     def __init__(
@@ -74,7 +79,9 @@ class ActionControlDiffusionDataset(Dataset):
             fps: FPS of the video in Hz.
             num_frames: Number of frames to use in each video.
         """
-        from cosmos1.models.autoregressive.nemo.post_training.action_control.action_control_dataset import ActionControlDataset
+        from cosmos1.models.autoregressive.nemo.post_training.action_control.action_control_dataset import (
+            ActionControlDataset,
+        )
 
         if subfolder is not None:
             self.dataset = ActionControlDataset(subfolder=subfolder, split=split)
@@ -87,7 +94,7 @@ class ActionControlDiffusionDataset(Dataset):
         self.original_video_height = original_video_height
         self.original_video_width = original_video_width
         self.dtype = dtype
-        self.fps=torch.tensor([fps] * 1, dtype=self.dtype)
+        self.fps = torch.tensor([fps] * 1, dtype=self.dtype)
         self.num_frames = torch.tensor([num_frames] * 1, dtype=self.dtype)
 
     def __len__(self) -> int:
@@ -111,7 +118,7 @@ class ActionControlDiffusionDataset(Dataset):
         # Current frame is of shape (<latent_dim>, <timestamp_dim>, height, width)
         current_frame = data['current_frame'].to(self.dtype)
         # Action is of shape (<action_emb_dim>), which is (7) for Bridge.
-        action=data['action'].to(self.dtype)
+        action = data['action'].to(self.dtype)
         # Next frame is of shape (<latent_dim>, <timestamp_dim>, height, width)
         next_frame = data['next_frame'].to(self.dtype)
 
@@ -119,24 +126,32 @@ class ActionControlDiffusionDataset(Dataset):
         # The first frame of the tensor is associated with the current video frame, i.e. the video conditioning latent,
         # and the next frame of the tensor is associated with the next video frame that is predicted by the model.
         # The loss is computed across both the noise of the current video frame and the predicted vs. original next frame.
-        video_latent = torch.cat([current_frame, next_frame], dim=-3) # concat on T dimension
+        video_latent = torch.cat([current_frame, next_frame], dim=-3)  # concat on T dimension
         # Video sequence length = T x H x W.
-        seq_len = video_latent.shape[-1] * video_latent.shape[-2] * video_latent.shape[-3] # W, H, T
+        seq_len = video_latent.shape[-1] * video_latent.shape[-2] * video_latent.shape[-3]  # W, H, T
         loss_mask = torch.ones(seq_len, dtype=self.dtype)
         noise_latent = torch.rand_like(video_latent, dtype=self.dtype)
         timesteps = torch.randn(1, dtype=self.dtype)
         # Note from Imaginaire/DIR team: we send in all zeros to our text embeddings for action control fine-tuning.
-        t5_text_embedding = torch.zeros((self.context_seq_len, self.crossattn_embedding_size),dtype=self.dtype)
+        t5_text_embedding = torch.zeros((self.context_seq_len, self.crossattn_embedding_size), dtype=self.dtype)
         t5_text_mask = torch.ones((self.context_seq_len), dtype=self.dtype)
-        image_size = torch.tensor([[self.original_video_height,
-                                    self.original_video_width,
-                                    self.original_video_height,
-                                    self.original_video_width]] * 1, dtype=self.dtype)
+        image_size = torch.tensor(
+            [
+                [
+                    self.original_video_height,
+                    self.original_video_width,
+                    self.original_video_height,
+                    self.original_video_width,
+                ]
+            ]
+            * 1,
+            dtype=self.dtype,
+        )
         conditioning_latent = current_frame
         padding_mask = torch.zeros((1, 1, self.original_video_height, self.original_video_width), dtype=self.dtype)
 
         sample = {
-            'video': video_latent, #tokens. We may not flatten it in the same way. AR model flattens it then offsets by 1 token. We may not wanna do that.
+            'video': video_latent,  # tokens. We may not flatten it in the same way. AR model flattens it then offsets by 1 token. We may not wanna do that.
             'noise_latent': noise_latent,
             'timesteps': timesteps,
             't5_text_embeddings': t5_text_embedding,
@@ -229,7 +244,7 @@ class VideoFolderDataset(Dataset):
             "padding_mask": torch.zeros((1, 1, h, w), dtype=torch.bfloat16),
             "loss_mask": loss_mask,
             "gt_latent": conditioning_latent,
-            "num_condition_t": random.randint(1, 4)
+            "num_condition_t": random.randint(1, 4),
         }
 
         return sample
@@ -260,6 +275,7 @@ class VideoFolderDataset(Dataset):
             Collated batch, with or without types.
         """
         return self._collate_fn(batch)
+
 
 class VideoFolderCameraCtrlDataset(Dataset):
     def __init__(self, root_dir='', cache=True):
@@ -365,6 +381,7 @@ class VideoFolderCameraCtrlDataset(Dataset):
         """
         return self._collate_fn(batch)
 
+
 class DiTVideoLatentMockDataset(torch.utils.data.Dataset):
     def __init__(self, num_samples, seq_len=21760):
         self.length = num_samples if num_samples > 0 else 1 << 32
@@ -379,13 +396,13 @@ class DiTVideoLatentMockDataset(torch.utils.data.Dataset):
         h = 34
         w = 40
         p = 1
-        seq_len = t*h*w
+        seq_len = t * h * w
         video_latent = torch.randn(1, 16, t, h, w).to(dtype=torch.uint8)
         loss_mask = torch.ones(seq_len, dtype=torch.bfloat16)
         noise_latent = torch.rand_like(video_latent, dtype=torch.bfloat16)
         timesteps = torch.randn(1)
         text_embedding = torch.randn(512, 1024)
-        pos_emb = self.pos_emb_3d.get_pos_id_3d(t=t, h=h//p, w=w//p)
+        pos_emb = self.pos_emb_3d.get_pos_id_3d(t=t, h=h // p, w=w // p)
 
         return {
             'video': video_latent,
@@ -400,7 +417,6 @@ class DiTVideoLatentMockDataset(torch.utils.data.Dataset):
             "padding_mask": torch.zeros((1, 1, 34, 40), dtype=torch.bfloat16),
             "loss_mask": loss_mask,
         }
-
 
     def _collate_fn(self, batch):
         """
@@ -444,7 +460,7 @@ class DiTActionDataModule(MockDataModule):
         fps: int = 5,
         num_frames: int = 1,
         *args,
-        **kwargs
+        **kwargs,
     ):
         """
         Instantiate the datamodule. Data is automatically downloaded and cached in HF_HOME, which can be modified in ENV.
@@ -485,6 +501,7 @@ class DiTActionDataModule(MockDataModule):
         self._validation_ds = self.dataset(split='val', **params)
         self._test_ds = self.dataset(split='test', **params)
 
+
 class DiTDataModule(MockDataModule):
     def __init__(self, *args, path='', dataset=VideoFolderDataset, **kwargs):
         super().__init__(*args, **kwargs)
@@ -495,6 +512,7 @@ class DiTDataModule(MockDataModule):
         self._train_ds = self.dataset(self.path)
         self._validation_ds = self.dataset(self.path)
         self._test_ds = self.dataset(self.path)
+
 
 class DiTCameraCtrlDataModule(MockDataModule):
     def __init__(self, *args, path='', dataset=VideoFolderCameraCtrlDataset, **kwargs):
